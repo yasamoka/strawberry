@@ -94,14 +94,14 @@ def _check_field_annotations(cls: Type):
             raise MissingFieldAnnotationError(field_name)
 
 
-def _wrap_dataclass(cls: Type):
+def _wrap_dataclass(cls: Type, frozen: bool = False):
     """Wrap a strawberry.type class with a dataclass and check for any issues
     before doing so"""
 
     # Ensure all Fields have been properly type-annotated
     _check_field_annotations(cls)
 
-    dclass_kwargs: Dict[str, bool] = {}
+    dclass_kwargs: Dict[str, bool] = {"frozen": frozen}
 
     # Python 3.10 introduces the kw_only param. If we're on an older version
     # then generate our own custom init function
@@ -174,6 +174,102 @@ def _process_type(
 T = TypeVar("T", bound=Type)
 
 
+def _type(
+    cls: Optional[T] = None,
+    *,
+    name: Optional[str] = None,
+    is_input: bool = False,
+    is_interface: bool = False,
+    description: Optional[str] = None,
+    directives: Optional[Sequence[object]] = (),
+    extend: bool = False,
+    frozen: bool = False,
+) -> Union[T, Callable[[T], T]]:
+    def wrap(cls):
+        if not inspect.isclass(cls):
+            if is_input:
+                exc = ObjectIsNotClassError.input
+            elif is_interface:
+                exc = ObjectIsNotClassError.interface
+            else:
+                exc = ObjectIsNotClassError.type
+            raise exc(cls)
+
+        wrapped = _wrap_dataclass(cls, frozen=frozen)
+        return _process_type(
+            wrapped,
+            name=name,
+            is_input=is_input,
+            is_interface=is_interface,
+            description=description,
+            directives=directives,
+            extend=extend,
+        )
+
+    if cls is None:
+        return wrap
+
+    return wrap(cls)
+
+
+@overload
+@__dataclass_transform__(
+    order_default=True, kw_only_default=True, field_descriptors=(field, StrawberryField)
+)
+def _input(
+    cls: T,
+    *,
+    name: Optional[str] = None,
+    is_input: bool = False,
+    is_interface: bool = False,
+    description: Optional[str] = None,
+    directives: Optional[Sequence[object]] = (),
+    extend: bool = False,
+    frozen: bool = False,
+) -> T:
+    ...
+
+
+@overload
+@__dataclass_transform__(
+    order_default=True, kw_only_default=True, field_descriptors=(field, StrawberryField)
+)
+def _input(
+    *,
+    name: Optional[str] = None,
+    is_input: bool = False,
+    is_interface: bool = False,
+    description: Optional[str] = None,
+    directives: Optional[Sequence[object]] = (),
+    extend: bool = False,
+    frozen: bool = False,
+) -> Callable[[T], T]:
+    ...
+
+
+def _input(
+    cls: Optional[T] = None,
+    *,
+    name: Optional[str] = None,
+    is_input: bool = False,
+    is_interface: bool = False,
+    description: Optional[str] = None,
+    directives: Optional[Sequence[object]] = (),
+    extend: bool = False,
+    frozen: bool = False,
+) -> Union[T, Callable[[T], T]]:
+    return _type(
+        cls=cls,
+        name=name,
+        is_input=is_input,
+        is_interface=is_interface,
+        description=description,
+        directives=directives,
+        extend=extend,
+        frozen=frozen,
+    )
+
+
 @overload
 @__dataclass_transform__(
     order_default=True, kw_only_default=True, field_descriptors=(field, StrawberryField)
@@ -226,31 +322,15 @@ def type(
     >>>     field_abc: str = "ABC"
     """
 
-    def wrap(cls):
-        if not inspect.isclass(cls):
-            if is_input:
-                exc = ObjectIsNotClassError.input
-            elif is_interface:
-                exc = ObjectIsNotClassError.interface
-            else:
-                exc = ObjectIsNotClassError.type
-            raise exc(cls)
-
-        wrapped = _wrap_dataclass(cls)
-        return _process_type(
-            wrapped,
-            name=name,
-            is_input=is_input,
-            is_interface=is_interface,
-            description=description,
-            directives=directives,
-            extend=extend,
-        )
-
-    if cls is None:
-        return wrap
-
-    return wrap(cls)
+    return _type(
+        cls=cls,
+        name=name,
+        is_input=is_input,
+        is_interface=is_interface,
+        description=description,
+        directives=directives,
+        extend=extend,
+    )
 
 
 @overload
@@ -263,6 +343,7 @@ def input(
     name: Optional[str] = None,
     description: Optional[str] = None,
     directives: Optional[Sequence[object]] = (),
+    frozen: bool = False,
 ) -> T:
     ...
 
@@ -276,6 +357,7 @@ def input(
     name: Optional[str] = None,
     description: Optional[str] = None,
     directives: Optional[Sequence[object]] = (),
+    frozen: bool = False,
 ) -> Callable[[T], T]:
     ...
 
@@ -286,6 +368,7 @@ def input(
     name: Optional[str] = None,
     description: Optional[str] = None,
     directives: Optional[Sequence[object]] = (),
+    frozen: bool = False,
 ):
     """Annotates a class as a GraphQL Input type.
     Example usage:
@@ -294,12 +377,13 @@ def input(
     >>>     field_abc: str = "ABC"
     """
 
-    return type(  # type: ignore # not sure why mypy complains here
+    return _input(  # type: ignore # not sure why mypy complains here
         cls,
         name=name,
         description=description,
         directives=directives,
         is_input=True,
+        frozen=frozen,
     )
 
 
